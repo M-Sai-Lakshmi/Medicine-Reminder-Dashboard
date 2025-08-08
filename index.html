@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Doctor Panel - Medicine Reminder</title>
+  <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-database-compat.js"></script>
+  <style>
+    body {
+      margin: 0; font-family: 'Segoe UI', sans-serif; background: #f4f6fa; color: #333;
+    }
+    header {
+      background: #6a1b9a; color: white; padding: 1rem; text-align: center; font-size: 1.5rem;
+    }
+    .container {
+      max-width: 800px; margin: 1rem auto; padding: 1rem;
+    }
+    .login-form, .dashboard {
+      background: white; padding: 2rem; border-radius: 8px; box-shadow: 0 0 10px rgba(0,0,0,0.1);
+    }
+    .section-title {
+      color: #6a1b9a; margin-top: 2rem; font-weight: bold;
+    }
+    .input-group {
+      margin: 1rem 0;
+    }
+    label {
+      display: block; margin-bottom: 0.3rem;
+    }
+    input, select {
+      width: 90%; padding: 0.5rem; border-radius: 5px; border: 1px solid #ccc;
+    }
+    button {
+      background: #6a1b9a; color: white; padding: 0.7rem 1.5rem; border: none; border-radius: 5px;
+      margin-top: 1rem; cursor: pointer; transition: background 0.3s, transform 0.2s;
+    }
+    button:hover {
+      background: #4a148c;
+      transform: scale(1.05);
+    }
+    .box-grid {
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 1rem;
+    }
+    .med-box {
+      border: 2px solid #6a1b9a; padding: 0.5rem; border-radius: 10px; background: #fafafa;
+    }
+    .dose-entry {
+      margin-bottom: 0.5rem; padding: 0.5rem; border: 1px solid #ddd; border-radius: 5px;
+      background: #fff;
+    }
+    .appointment-item {
+      background: #f1ecf7; padding: 1rem; margin-bottom: 1rem; border-left: 4px solid #6a1b9a;
+    }
+    .status-message {
+      color: green; margin-top: 1rem;
+    }
+  </style>
+</head>
+<body>
+  <header>Doctor Panel - Medicine Reminder</header>
+  <div class="container">
+    <div class="login-form" id="login-section">
+      <h2>Login</h2>
+      <div class="input-group">
+        <label>Email</label>
+        <input type="email" id="email" placeholder="doctor@example.com" />
+      </div>
+      <div class="input-group">
+        <label>Password</label>
+        <input type="password" id="password" placeholder="••••••" />
+      </div>
+      <button onclick="login()">Login</button>
+    </div>
+
+    <div class="dashboard" id="dashboard" style="display:none;">
+      <button onclick="logout()" style="float:right; background:#c62828;">Logout</button>
+      <h2 class="section-title">Medicine Schedule</h2>
+      <div class="box-grid" id="medBoxContainer"></div>
+      <button onclick="saveSchedule()">Save Schedule</button>
+      <div id="status-message" class="status-message"></div>
+
+      <h2 class="section-title">Appointments</h2>
+      <div id="appointments"></div>
+    </div>
+  </div>
+
+  <script>
+    const firebaseConfig = {
+      apiKey: "AIzaSyCSmJ4mePkwBRUy2ZTwbZ5pBGkLaVc-R60",
+      authDomain: "medicine-reminder-system-5f70c.firebaseapp.com",
+      databaseURL: "https://medicine-reminder-system-5f70c-default-rtdb.firebaseio.com",
+      projectId: "medicine-reminder-system-5f70c",
+    };
+
+    firebase.initializeApp(firebaseConfig);
+    const auth = firebase.auth();
+    const db = firebase.database();
+
+    const loginSection = document.getElementById("login-section");
+    const dashboard = document.getElementById("dashboard");
+    const statusMessage = document.getElementById("status-message");
+
+    function login() {
+      const email = document.getElementById("email").value;
+      const pass = document.getElementById("password").value;
+      auth.signInWithEmailAndPassword(email, pass).then(() => {
+        loginSection.style.display = "none";
+        dashboard.style.display = "block";
+        renderBoxes();
+        loadAppointments();
+        loadSchedule();
+      }).catch(e => alert("Login failed: " + e.message));
+    }
+
+    function logout() {
+      auth.signOut().then(() => {
+        loginSection.style.display = "block";
+        dashboard.style.display = "none";
+        clearTimeout(inactivityTimer);
+      });
+    }
+
+    function renderBoxes() {
+      const container = document.getElementById("medBoxContainer");
+      container.innerHTML = '';
+      for (let i = 1; i <= 6; i++) {
+        const box = document.createElement("div");
+        box.className = "med-box";
+        box.innerHTML = `
+          <h4>Box ${i}</h4>
+          <label>Medicine Name</label>
+          <input type="text" id="medname-${i}" placeholder="Enter medicine name">
+          <label>Number of Doses</label>
+          <input type="number" min="1" max="6" id="times-${i}" onchange="generateTimes(${i})" placeholder="1-6">
+          <div id="time-inputs-${i}"></div>
+        `;
+        container.appendChild(box);
+      }
+    }
+
+    function generateTimes(boxId, prefill = []) {
+      const count = parseInt(document.getElementById(`times-${boxId}`).value) || 0;
+      const container = document.getElementById(`time-inputs-${boxId}`);
+      container.innerHTML = '';
+
+      for (let j = 0; j < count; j++) {
+        const div = document.createElement("div");
+        div.className = "dose-entry";
+        div.innerHTML = `
+          <label>Dose ${j + 1} Time</label>
+          <input type="time" id="box-${boxId}-time-${j}" required>
+          <label>Before/After Food</label>
+          <select id="box-${boxId}-food-${j}">
+            <option value="before">Before Food</option>
+            <option value="after">After Food</option>
+          </select>
+        `;
+        container.appendChild(div);
+
+        if (prefill[j]) {
+          document.getElementById(`box-${boxId}-time-${j}`).value = prefill[j].time;
+          document.getElementById(`box-${boxId}-food-${j}`).value = prefill[j].food;
+        }
+      }
+    }
+
+    function saveSchedule() {
+      const schedule = {};
+      let isValid = true;
+
+      for (let i = 1; i <= 6; i++) {
+        const medname = document.getElementById(`medname-${i}`).value;
+        const times = parseInt(document.getElementById(`times-${i}`).value) || 0;
+        const doses = {};
+
+        for (let j = 0; j < times; j++) {
+          const timeInput = document.getElementById(`box-${i}-time-${j}`);
+          const time = timeInput.value;
+          const food = document.getElementById(`box-${i}-food-${j}`).value;
+
+          if (!time) {
+            alert(`Please enter time for Box ${i}, Dose ${j+1}`);
+            timeInput.focus();
+            isValid = false;
+            return;
+          }
+          doses[j] = { food, time: time.substring(0, 5) };
+        }
+        schedule[`box${i}`] = { name: medname, doses };
+      }
+
+      if (!isValid) return;
+
+      statusMessage.textContent = "Saving schedule...";
+
+      db.ref("medicine_schedule").set(schedule)
+        .then(() => {
+          statusMessage.textContent = "Schedule saved successfully!";
+          setTimeout(() => statusMessage.textContent = "", 3000);
+        })
+        .catch(err => {
+          statusMessage.textContent = "Error saving schedule: " + err.message;
+        });
+    }
+
+    function loadSchedule() {
+      db.ref("medicine_schedule").once("value").then(snapshot => {
+        const data = snapshot.val();
+        if (!data) return;
+
+        for (let i = 1; i <= 6; i++) {
+          const box = data[`box${i}`];
+          if (!box) continue;
+
+          document.getElementById(`medname-${i}`).value = box.name || "";
+          if (box.doses) {
+            const doseCount = Object.keys(box.doses).length;
+            document.getElementById(`times-${i}`).value = doseCount;
+            const dosesArray = [];
+            Object.keys(box.doses).sort().forEach(key => {
+              dosesArray.push(box.doses[key]);
+            });
+            generateTimes(i, dosesArray);
+          }
+        }
+      }).catch(err => {
+        console.error("Error loading schedule:", err);
+      });
+    }
+
+    function loadAppointments() {
+      const appointEl = document.getElementById("appointments");
+      db.ref("appointments").on("value", snapshot => {
+        appointEl.innerHTML = '';
+        const data = snapshot.val();
+        if (!data) return;
+
+        Object.entries(data).forEach(([id, appt]) => {
+          const div = document.createElement("div");
+          div.className = "appointment-item";
+          div.innerHTML = `
+            <strong>Date:</strong> ${appt.date} <br/>
+            <strong>Time:</strong> ${appt.time} <br/>
+          `;
+          appointEl.appendChild(div);
+        });
+      });
+    }
+
+    auth.onAuthStateChanged(user => {
+      if (user) {
+        loginSection.style.display = "none";
+        dashboard.style.display = "block";
+        renderBoxes();
+        loadAppointments();
+        loadSchedule();
+        resetInactivityTimer();
+      } else {
+        loginSection.style.display = "block";
+        dashboard.style.display = "none";
+      }
+    });
+  </script>
+</body>
+</html>
